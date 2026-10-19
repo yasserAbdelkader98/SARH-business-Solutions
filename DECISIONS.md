@@ -1,6 +1,6 @@
 # Decisions in progress
 
-These are Phase 1 notes, not the final three-decision submission. R2's required decision will be written when implemented.
+These are working notes, not the final three-decision submission. R2's required decision will be written when implemented.
 
 ## Seed safely without resetting the database
 
@@ -22,8 +22,18 @@ Confirm query plans and search behavior during R1 rather than claiming performan
 
 The optional idempotency key uses a [MongoDB partial unique index](https://www.mongodb.com/docs/manual/core/index-partial/) covering strings, so multiple documents can omit the key. Server retry handling remains R2 work.
 
+## Phase 2: short-lived JWTs in memory
+
+Store the token in React state and send it explicitly in the Authorization header.
+Persistent localStorage was considered but leaves a token accessible to scripts across reloads.
+In-memory storage trades automatic session restoration for simpler lifecycle and less persistence.
+It does not prevent active XSS, and sign-out cannot revoke a copied JWT.
+Check the database user and role on each authenticated request so role changes take effect immediately.
+This costs one indexed user lookup; a token-only role check would be cheaper but stale until expiry.
+Use a simple per-process login limiter rather than a shared service for this single-server local app.
+
 ## AI disclosure
 
 After Phase 1 review, the client and server use independent npm packages instead of a root workspace, as requested. This removes the root manifest and concurrently dependency; development now uses two terminals. Each app has its own `.env` and `.env.example`. The client stores only development ports; database credentials stay on the server. The client's `API_PORT` must be kept in sync with the server's `PORT`.
 
-Codex assisted with Phase 1 scaffolding, schemas, seed generation, documentation and verification commands. The candidate must review and understand these choices before the final submission and live interview.
+Codex assisted with scaffolding, schemas, seed generation, authentication, the login screen, security tests, documentation and verification commands. The candidate must review and understand these choices before the final submission and live interview.
