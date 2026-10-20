@@ -34,7 +34,7 @@ With client port 3000 and server port 8000, open http://localhost:3000. The page
 
 ## Commands
 
-Backend order handlers live together in `server/src/controllers/orders.ts`; their Zod schemas live in `server/src/validation/Orders.ts`. Routes only register URLs and middleware. Frontend screens live in `client/src/Pages/`, reusable UI in `client/src/components/`, and shared authentication state in `client/src/context/AuthContext.tsx`. Authentication still uses an in-memory Bearer token, not cookies.
+Backend order handlers live together in `server/src/controllers/orders.ts`; their Zod schemas live in `server/src/validation/Orders.ts`. Routes only register URLs and middleware. Frontend screens live in `client/src/Pages/`, reusable UI in `client/src/components/`, and shared authentication state in `client/src/context/AuthContext.tsx`. Authentication uses an HttpOnly, SameSite=Strict cookie; React holds only the user profile.
 
 Use Prettier for all code formatting. Run `npm run format` in each app before review, or `npm run format:check` to check formatting without changing files. Both apps use the root `.prettierrc.json`; generated files, environment files and `email.md` are excluded.
 
@@ -103,13 +103,13 @@ The query key contains the user ID plus search, status, sort field, direction an
 
 `npm test` in `server/` includes the auth regression tests and a separate test database containing 50,000 orders. It checks projection, pagination, total count, filters, exact-email/name search, both sorts/directions, tie-breakers, invalid parameters and indexed query plans. Both temporary databases are removed afterward; the application database is not modified.
 
-`npm test` in `client/` runs Playwright browser checks against a temporary Vite server on port 4174, with mocked API responses to force older requests to finish later. It also checks the Bearer header, pagination reset, debounce, error/retry and empty state. Windows uses installed Microsoft Edge; on other systems install the test browser once with `npx playwright install chromium`. No backend or application credentials are required for these browser tests.
+`npm test` in `client/` runs Playwright browser checks against a temporary Vite server on port 4174, with mocked API responses to force older requests to finish later. It also checks that no Bearer header is sent, pagination reset, debounce, error/retry and empty state. Windows uses installed Microsoft Edge; on other systems install the test browser once with `npx playwright install chromium`. No backend or application credentials are required for these browser tests.
 
 Phase 3 verification: all 16 reported backend tests and both browser tests passed. The browser race test deliberately ignores transport cancellation, exercising query-key isolation even when old responses arrive later. On the isolated 50,000-row fixture, ordinary list plans examined 25 keys for 25 rows, exact email examined one key, and a broad text search examined 25,000 matching keys; none of the four inspected plans used a collection scan. These are local observations, not a production latency guarantee.
 
 ## Create order (R2)
 
-`POST /api/orders` requires a Bearer token and `Idempotency-Key: <UUID>`. Example JSON (prices are integer cents):
+`POST /api/orders` requires the authentication cookie, a trusted `Origin` header and `Idempotency-Key: <UUID>`. Example JSON (prices are integer cents):
 
 ```json
 {
@@ -133,7 +133,7 @@ The controller normalizes names by trimming and emails by trimming/lowercasing, 
 
 ### Client operation lifecycle
 
-The first valid submission generates `crypto.randomUUID()` and saves the key and validated payload in sessionStorage under the user ID before sending. Submitted fields remain locked so Retry same order resends exactly the same payload/key after a network failure, a 15-second client timeout, or re-login after a page reload in the same tab. A synchronous in-flight guard blocks double-clicks before React re-renders; the database remains the actual duplicate-prevention guarantee.
+The first valid submission generates `crypto.randomUUID()` and saves the key and validated payload in sessionStorage under the user ID before sending. Submitted fields remain locked so Retry same order resends exactly the same payload/key after a network failure, a 15-second client timeout, or a page reload in the same tab. A synchronous in-flight guard blocks double-clicks before React re-renders; the database remains the actual duplicate-prevention guarantee.
 
 Success retains the operation and shows its order ID. Only Start new order clears it and enables a fresh submission; abandoning an unresolved request requires confirmation because it may already have succeeded. Successful creation invalidates the orders queries, with no optimistic rows. The new order may not appear under the current search/status/page settings.
 
@@ -158,7 +158,7 @@ The guarantee is at most one stored order per UUID key while its indexed order r
 
 Deleting the order also deletes its key/hash, so replay after an admin hard-delete can create an order again. Clearing storage, closing a tab, manually abandoning an uncertain request, database loss, or removing the unique index falls outside the guarantee. No permanent idempotency ledger, cross-device draft recovery, external side-effect guarantee, Redis, queue, distributed lock or multi-document transaction is implemented.
 
-To verify manually, create an order and check the displayed total. Inspect the POST's UUID header, retry after a simulated network failure, and confirm the same key is reused. Reload and sign in again to recover the saved operation. Start new order should be the only normal action that clears the completed/pending operation and permits a new key.
+To verify manually, create an order and check the displayed total. Inspect the POST's UUID header, retry after a simulated network failure, and confirm the same key is reused. Reload to recover the session and saved operation; sign in again only if the cookie has expired. Start new order should be the only normal action that clears the completed/pending operation and permits a new key.
 
 ## Remaining assessment work
 
@@ -174,11 +174,11 @@ Final assessment documentation consolidation and screenshots/design memo are def
 
 ## Authentication API
 
-`POST /api/login` accepts JSON `{ "email": "your seeded email", "password": "your seeded password" }` and returns `{ token, user: { id, email, role } }`. Invalid input returns 400; incorrect credentials return 401; rate limiting returns 429 with `Retry-After`. Email is trimmed and lowercased; passwords are not trimmed.
+`POST /api/login` accepts JSON `{ "email": "your seeded email", "password": "your seeded password" }` and sets the authentication cookie and returns `{ user: { id, email, role } }`. Invalid input returns 400; incorrect credentials return 401; rate limiting returns 429 with `Retry-After`. Email is trimmed and lowercased; passwords are not trimmed.
 
-All `/api/orders` routes require `Authorization: Bearer <token>`. `DELETE /api/orders/:id` returns 204 for successful admin deletion, 403 for an agent, 400 for a malformed ID, and 404 for a missing order. Missing/invalid/expired authentication returns 401 before the route handler runs. Both admin and agent users can GET the list and POST a new order.
+All `/api/orders` routes require the `access_token` cookie. Bearer headers and query-string tokens are not accepted. `GET /api/me` restores the current user after reload; `POST /api/logout` clears the cookie, including when it has expired. `DELETE /api/orders/:id` returns 204 for successful admin deletion, 403 for an agent, 400 for a malformed ID, and 404 for a missing order. Missing/invalid/expired authentication returns 401 before the route handler runs. Both admin and agent users can GET the list and POST a new order.
 
-The React auth provider stores the session in state and exposes `authenticatedRequest(path, options)`, which attaches the Bearer token and signs out on 401. The orders list uses this helper and passes its AbortSignal through to fetch. Admins see a delete icon in each order row and must confirm before deletion. Agents do not see the action. Backend role checks remain authoritative, and failures are shown without removing the row.
+The React auth provider stores only the user in state and exposes `authenticatedRequest(path, options)`. Fetch uses same-origin credentials so the browser sends the cookie; a 401 clears the user and query cache. The orders list uses this helper and passes its AbortSignal through to fetch. Admins see a delete icon in each order row and must confirm before deletion. Agents do not see the action. Backend role checks remain authoritative, and failures are shown without removing the row.
 
 ## Security review of the supplied code
 
@@ -188,7 +188,7 @@ The React auth provider stores the session in state and exposes `authenticatedRe
 | `jwt.decode()` reads claims without verifying the signature or expiry.                              | Use `jwt.verify()` and reject invalid or expired tokens.                                                                     |
 | Token algorithms and payload shape are not constrained.                                             | Allow only HS256; validate ObjectId-shaped `sub`, allowed role, numeric `iat`, and mandatory `exp` with Zod.                 |
 | Tokens have no expiration.                                                                          | Set an explicit lifetime when signing (15 minutes in the example configuration).                                             |
-| Splitting the header blindly accepts malformed authentication schemes.                              | Require a correctly formed Bearer authorization header.                                                                      |
+| Splitting the header blindly accepts malformed authentication schemes.                              | Read authentication only from the HttpOnly cookie and verify its JWT.                                                        |
 | Query-string tokens can leak through URL logging/history.                                           | Never read authentication from query parameters.                                                                             |
 | The delete authorization check exists only in React and can be bypassed with a direct HTTP request. | Protect the orders router and enforce `requireRole('admin')` on the server.                                                  |
 | Login compares plaintext passwords in a database query.                                             | Query by normalized email only, then verify the stored bcrypt hash with `bcrypt.compare()`.                                  |
@@ -201,15 +201,19 @@ JWT verification and expiration follow the [jsonwebtoken API](https://github.com
 
 ### Token storage trade-off
 
-The access token is held only in React memory, so a reload signs the user out and no token remains in localStorage, sessionStorage or cookies. The browser does not automatically attach it to cross-site requests, reducing conventional cookie-based CSRF exposure, but active XSS can still make authenticated requests or steal the token while the page is open. Sign-out clears memory and the query cache; it does not revoke a copied token, which remains usable until expiry unless the user is deleted or the signing secret changes.
+The JWT is stored in a host-only HttpOnly cookie with `SameSite=Strict`, path `/api`, and a maximum age matching its JWT expiration. `Secure` is enabled when `NODE_ENV=production`; production must use HTTPS. JavaScript cannot read the token, but active XSS can still send authenticated requests. Logout clears the browser cookie and query cache; it does not revoke a copied JWT, which remains usable until expiration unless the user is deleted or the signing secret changes. No refresh tokens are added.
+
+SameSite reduces cross-site cookie sending, but is not the only CSRF defense: every POST/PUT/PATCH/DELETE request, including login and logout, must have an `Origin` exactly matching `APP_ORIGIN`. Missing, null or other origins return 403. This also rejects other ports or sibling origins that could otherwise be considered same-site. API clients and scripts must supply the configured Origin and a cookie jar. See [MDN cookie attributes](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Set-Cookie) and [OWASP origin verification](https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html#verifying-origin-with-standard-headers).
+
+Set `APP_ORIGIN=http://localhost:3000` in `server/.env` for the current local frontend and `NODE_ENV=development`. Change APP_ORIGIN if the frontend hostname, protocol or port changes; localhost and 127.0.0.1 are different origins. The frontend and API must share an origin via Vite's proxy locally and a reverse proxy in production. Set NODE_ENV=production and APP_ORIGIN to the HTTPS frontend origin for deployment. There is no cross-origin CORS configuration.
 
 ### Phase 2 manual verification
 
 1. Start MongoDB and run `npm run dev` in each app. Log in with the admin credentials used when seeding; verify email/role appear and the password field disappears.
-2. Reload: the login screen must return. Log in as the agent, sign out, and check browser storage: no auth token should be stored there.
+2. Reload: you stay signed in until expiry. In DevTools Cookies, inspect access_token: HttpOnly, SameSite Strict, path /api. The token must not appear in localStorage, sessionStorage or the login response JSON. Sign out, reload, and confirm the login screen returns.
 3. Submit a wrong password: expect a visible generic error. Repeat beyond `LOGIN_RATE_LIMIT_MAX`: expect 429. The limiter counts successful and failed login requests; restart the API or wait for its window before more manual attempts.
-4. Use an API client to log in, then send a DELETE with `Authorization: Bearer <token>`. An agent gets 403 and the order stays. An admin gets 204 and the order is removed. Use a disposable record; reseeding restores a deleted deterministic seed order.
-5. Repeat without a header or with an expired token: expect 401. `?token=...` alone must not authenticate. The automated suite also covers forged signatures, the wrong algorithm and malformed claims.
+4. Use an API client to log in, retain the response cookie in its cookie jar, then send a DELETE with the configured `Origin` header. Login also requires that Origin. An agent gets 403 and the order stays. An admin gets 204 and the order is removed. Use a disposable record; reseeding restores a deleted deterministic seed order.
+5. Repeat without a cookie or with an expired JWT cookie (keeping the trusted Origin): expect 401. Mutations with an untrusted or missing Origin return 403. `?token=...` alone must not authenticate. The automated suite also covers forged signatures, the wrong algorithm and malformed claims.
 
 ### Verification and limits
 
@@ -217,4 +221,4 @@ The access token is held only in React memory, so a reload signs the user out an
 
 The application database was empty at the end of Phase 2 (zero users and orders), so a login using the environment's seed credentials returned 401. Run `npm run seed` in `server/` before manual login. No application data was seeded or deleted during this phase.
 
-The rate limiter uses process memory, resets on restart and is not shared across servers. Express does not trust forwarded IP headers; through the local Vite proxy clients may share a limiter bucket. Authentication has no refresh or revocation service; expired tokens require login again, and the UI discovers expiration on its next authenticated request. Browser interaction checks have not been automated or manually performed in this environment.
+The rate limiter uses process memory, resets on restart and is not shared across servers. Express does not trust forwarded IP headers; through the local Vite proxy clients may share a limiter bucket. Authentication has no refresh or revocation service; expired tokens require login again, and the UI discovers expiration on its next authenticated request. Cookie migration verification: 26 reported backend tests and seven Playwright browser tests passed, as did both builds. Browser tests mock API responses; backend tests exercise real Express and MongoDB independently.

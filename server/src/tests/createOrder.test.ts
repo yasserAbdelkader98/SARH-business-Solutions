@@ -6,6 +6,7 @@ import mongoose from "mongoose";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
 
+process.env.APP_ORIGIN = "http://localhost:3000";
 process.env.JWT_SECRET = randomBytes(32).toString("hex");
 process.env.JWT_EXPIRES_IN_SECONDS = "900";
 process.env.LOGIN_RATE_LIMIT_MAX = "30";
@@ -62,7 +63,8 @@ test("R2: concurrent create proof and validation", async (t) => {
         headers: {
           "Content-Type": "application/json",
           "Idempotency-Key": key,
-          Authorization: `Bearer ${accessToken}`,
+          Cookie: `access_token=${accessToken}`,
+          Origin: config.APP_ORIGIN,
         },
         body: JSON.stringify(body),
       });

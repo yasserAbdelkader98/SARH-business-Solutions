@@ -1,4 +1,5 @@
 import type { RequestHandler } from "express";
+import { cookieName, cookieOptions } from "../cookies.js";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
@@ -40,8 +41,22 @@ export const login: RequestHandler = async (req, res) => {
     algorithm: "HS256",
     expiresIn: config.JWT_EXPIRES_IN_SECONDS,
   });
+  res.cookie(cookieName, token, {
+    ...cookieOptions,
+    maxAge: config.JWT_EXPIRES_IN_SECONDS * 1000,
+  });
   res.json({
-    token,
     user: { id: user.id, email: user.email, role: user.role },
   });
+};
+
+export const me: RequestHandler = (req, res) => {
+  res.set("Cache-Control", "no-store");
+  res.json({ user: req.user });
+};
+
+export const logout: RequestHandler = (_req, res) => {
+  res.set("Cache-Control", "no-store");
+  res.clearCookie(cookieName, cookieOptions);
+  res.sendStatus(204);
 };

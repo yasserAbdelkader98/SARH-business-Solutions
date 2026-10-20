@@ -1,12 +1,11 @@
-export async function apiRequest(
-  path: string,
-  options: RequestInit = {},
-  token?: string,
-) {
+export async function apiRequest(path: string, options: RequestInit = {}) {
   const headers = new Headers(options.headers);
   if (options.body) headers.set("Content-Type", "application/json");
-  if (token) headers.set("Authorization", `Bearer ${token}`);
-  return fetch(`/api${path}`, { ...options, headers });
+  return fetch(`/api${path}`, {
+    ...options,
+    headers,
+    credentials: "same-origin",
+  });
 }
 
 export async function getErrorMessage(response: Response) {

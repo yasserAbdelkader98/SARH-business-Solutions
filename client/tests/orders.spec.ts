@@ -17,10 +17,12 @@ test("latest filters win even when earlier responses finish later", async ({
   await page.route("**/api/health", (route) =>
     route.fulfill({ json: { status: "ok" } }),
   );
+  await page.route("**/api/me", (route) =>
+    route.fulfill({ status: 401, json: { error: "Sign in" } }),
+  );
   await page.route("**/api/login", (route) =>
     route.fulfill({
       json: {
-        token: "test-token",
         user: { id: "test-agent", email: "agent@example.com", role: "agent" },
       },
     }),
@@ -28,7 +30,7 @@ test("latest filters win even when earlier responses finish later", async ({
   const requested: string[] = [];
   const completed: string[] = [];
   await page.route("**/api/orders?**", async (route) => {
-    expect(route.request().headers().authorization).toBe("Bearer test-token");
+    expect(route.request().headers().authorization).toBeUndefined();
     const params = new URL(route.request().url()).searchParams;
     const status = params.get("status") || "pending";
     requested.push(status);
@@ -111,10 +113,12 @@ test("empty and failed responses have clear states and retry", async ({
   await page.route("**/api/health", (route) =>
     route.fulfill({ json: { status: "ok" } }),
   );
+  await page.route("**/api/me", (route) =>
+    route.fulfill({ status: 401, json: { error: "Sign in" } }),
+  );
   await page.route("**/api/login", (route) =>
     route.fulfill({
       json: {
-        token: "test-token",
         user: { id: "agent", email: "agent@example.com", role: "agent" },
       },
     }),

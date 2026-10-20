@@ -9,6 +9,10 @@ dotenv.config({
 
 export const config = z
   .object({
+    NODE_ENV: z
+      .enum(["development", "test", "production"])
+      .default("development"),
+    APP_ORIGIN: z.url().transform((value) => new URL(value).origin),
     MONGODB_URI: z.string().min(1),
     PORT: z.coerce.number().int().min(1).max(65535),
     JWT_SECRET: z.string().min(32),

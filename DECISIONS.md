@@ -22,12 +22,15 @@ Confirm query plans and search behavior during R1 rather than claiming performan
 
 The idempotency key uses a [MongoDB partial unique index](https://www.mongodb.com/docs/manual/core/index-partial/) covering strings, so seed documents can omit the key. API creation requires it.
 
-## Phase 2: short-lived JWTs in memory
+## Authentication update: short-lived JWTs in HttpOnly cookies
 
-Store the token in React state and send it explicitly in the Authorization header.
-Persistent localStorage was considered but leaves a token accessible to scripts across reloads.
-In-memory storage trades automatic session restoration for simpler lifecycle and less persistence.
-It does not prevent active XSS, and sign-out cannot revoke a copied JWT.
+Store the JWT in a host-only HttpOnly, SameSite=Strict cookie, with Secure enabled in production.
+This replaces the earlier memory/Bearer approach at the user's request and allows session restoration after reload through GET /api/me.
+React stores only the user profile; logout calls the server to clear the cookie before clearing local state.
+All mutations require an exact configured Origin as an additional CSRF defense; API scripts must send it too.
+Use the same origin for frontend and API through a proxy, avoiding unnecessary CORS configuration.
+HttpOnly prevents JavaScript from reading the token, but active XSS can still act as the user.
+No refresh or revocation service is added; copied JWTs remain valid until expiry.
 Check the database user and role on each authenticated request so role changes take effect immediately.
 This costs one indexed user lookup; a token-only role check would be cheaper but stale until expiry.
 Use a simple per-process login limiter rather than a shared service for this single-server local app.
@@ -49,7 +52,7 @@ Insert the complete order, UUID key and canonical SHA-256 hash as one document u
 A pre-insert findOne followed by create was rejected because simultaneous requests can both observe no order.
 On duplicate-key errors, compare the normalized payload/user hash and return the stored order or 409.
 Briefly retry a missing winner lookup; otherwise return 503 and require the same key on retry.
-Keep the exact submitted payload/key in per-user sessionStorage so same-tab reloads can recover it; tokens remain in memory.
+Keep the exact submitted payload/key in per-user sessionStorage so same-tab reloads can recover it; authentication tokens stay in the HttpOnly cookie.
 Integer-cent totals are recalculated on the server, and the list refreshes only after confirmed success.
 The guarantee lasts while the keyed record exists; hard-delete, cleared client storage and intentionally new keys are explicit limits.
 

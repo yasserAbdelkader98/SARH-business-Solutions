@@ -1,3 +1,5 @@
+import cookieParser from "cookie-parser";
+import { requireTrustedOrigin } from "./middleware/csrf.js";
 import express from "express";
 import type { ErrorRequestHandler } from "express";
 import mongoose from "mongoose";
@@ -6,6 +8,8 @@ import { ordersRouter } from "./routes/orders.js";
 
 export const app = express();
 app.disable("x-powered-by");
+app.use(cookieParser());
+app.use("/api", requireTrustedOrigin);
 app.use(express.json({ limit: "16kb" }));
 
 app.get("/api/health", (_req, res) => {

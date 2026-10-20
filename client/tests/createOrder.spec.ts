@@ -14,10 +14,12 @@ test.beforeEach(async ({ page }) => {
   await page.route("**/api/health", (route) =>
     route.fulfill({ json: { status: "ok" } }),
   );
+  await page.route("**/api/me", (route) =>
+    route.fulfill({ status: 401, json: { error: "Sign in" } }),
+  );
   await page.route("**/api/login", (route) =>
     route.fulfill({
       json: {
-        token: "test-token",
         user: { id: "agent", email: "agent@example.com", role: "agent" },
       },
     }),
@@ -36,7 +38,7 @@ test("double submit, lost response, reload and retry retain the operation key an
 }) => {
   const requests: { key: string; body: string }[] = [];
   await page.route("**/api/orders", async (route) => {
-    expect(route.request().headers().authorization).toBe("Bearer test-token");
+    expect(route.request().headers().authorization).toBeUndefined();
     requests.push({
       key: route.request().headers()["idempotency-key"],
       body: route.request().postData()!,

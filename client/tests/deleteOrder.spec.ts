@@ -9,10 +9,12 @@ for (const role of ["admin", "agent"]) {
     await page.route("**/api/health", (route) =>
       route.fulfill({ json: { status: "ok" } }),
     );
+    await page.route("**/api/me", (route) =>
+      route.fulfill({ status: 401, json: { error: "Sign in" } }),
+    );
     await page.route("**/api/login", (route) =>
       route.fulfill({
         json: {
-          token: "test-token",
           user: { id: role, email: `${role}@example.com`, role },
         },
       }),
@@ -41,7 +43,7 @@ for (const role of ["admin", "agent"]) {
     );
     await page.route("**/api/orders/order123", (route) => {
       expect(route.request().method()).toBe("DELETE");
-      expect(route.request().headers().authorization).toBe("Bearer test-token");
+      expect(route.request().headers().authorization).toBeUndefined();
       attempts++;
       if (attempts === 1)
         return route.fulfill({

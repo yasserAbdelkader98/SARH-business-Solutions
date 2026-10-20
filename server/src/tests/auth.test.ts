@@ -6,6 +6,7 @@ import mongoose from "mongoose";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 
+process.env.APP_ORIGIN = "http://localhost:3000";
 process.env.JWT_SECRET = randomBytes(32).toString("hex");
 process.env.JWT_EXPIRES_IN_SECONDS = "900";
 process.env.LOGIN_RATE_LIMIT_MAX = "30";
@@ -44,13 +45,19 @@ test("authentication and authorization against an isolated MongoDB database", as
     const login = (body: unknown) =>
       fetch(`${base}/login`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Origin: config.APP_ORIGIN,
+        },
         body: JSON.stringify(body),
       });
     const remove = (token?: string, id = order.id) =>
       fetch(`${base}/orders/${id}`, {
         method: "DELETE",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: {
+          Origin: config.APP_ORIGIN,
+          ...(token ? { Cookie: `access_token=${token}` } : {}),
+        },
       });
     const adminResponse = await login({
       email: " ADMIN@example.com ",
@@ -59,19 +66,32 @@ test("authentication and authorization against an isolated MongoDB database", as
     assert.equal(adminResponse.status, 200);
     assert.equal(adminResponse.headers.get("cache-control"), "no-store");
     const adminBody: {
-      token: string;
+      token?: string;
       user: { role: string; passwordHash?: string };
     } = await adminResponse.json();
     const agentResponse = await login({ email: agent.email, password });
-    const agentBody: { token: string } = await agentResponse.json();
+    const adminToken = adminResponse.headers
+      .get("set-cookie")!
+      .split(";")[0]
+      .slice("access_token=".length);
+    const agentToken = agentResponse.headers
+      .get("set-cookie")!
+      .split(";")[0]
+      .slice("access_token=".length);
 
     await t.test(
-      "login returns an expiring signed token without the password hash",
+      "login sets an HttpOnly Strict cookie without exposing the token",
       () => {
         assert.equal(agentResponse.status, 200);
         assert.equal(adminBody.user.role, "admin");
         assert.equal(adminBody.user.passwordHash, undefined);
-        const claims = jwt.verify(adminBody.token, config.JWT_SECRET, {
+        assert.equal(adminBody.token, undefined);
+        const cookie = adminResponse.headers.get("set-cookie")!;
+        assert.match(cookie, /HttpOnly/);
+        assert.match(cookie, /SameSite=Strict/);
+        assert.match(cookie, /Path=\/api/);
+        assert.match(cookie, /Max-Age=900/);
+        const claims = jwt.verify(adminToken, config.JWT_SECRET, {
           algorithms: ["HS256"],
         });
         assert.ok(typeof claims !== "string");
@@ -100,7 +120,10 @@ test("authentication and authorization against an isolated MongoDB database", as
           (
             await fetch(`${base}/login`, {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
+              headers: {
+                "Content-Type": "application/json",
+                Origin: config.APP_ORIGIN,
+              },
               body: "{",
             })
           ).status,
@@ -109,13 +132,14 @@ test("authentication and authorization against an isolated MongoDB database", as
       },
     );
     await t.test(
-      "orders require a Bearer header and reject query-string tokens",
+      "orders require a cookie and reject Bearer and query-string tokens",
       async () => {
         assert.equal((await remove()).status, 401);
         assert.equal(
           (
-            await fetch(`${base}/orders/${order.id}?token=${adminBody.token}`, {
+            await fetch(`${base}/orders/${order.id}?token=${adminToken}`, {
               method: "DELETE",
+              headers: { Origin: config.APP_ORIGIN },
             })
           ).status,
           401,
@@ -123,7 +147,7 @@ test("authentication and authorization against an isolated MongoDB database", as
         assert.equal(
           (
             await fetch(`${base}/orders`, {
-              headers: { Authorization: `Basic ${adminBody.token}` },
+              headers: { Authorization: `Bearer ${adminToken}` },
             })
           ).status,
           401,
@@ -156,29 +180,67 @@ test("authentication and authorization against an isolated MongoDB database", as
       },
     );
     await t.test("agent gets 403 and the order remains", async () => {
-      assert.equal((await remove(agentBody.token)).status, 403);
+      assert.equal((await remove(agentToken)).status, 403);
       assert.ok(await Order.exists({ _id: order.id }));
     });
     await t.test(
       "current database role overrides a previously issued admin role",
       async () => {
         await User.updateOne({ _id: admin.id }, { role: "agent" });
-        assert.equal((await remove(adminBody.token)).status, 403);
+        assert.equal((await remove(adminToken)).status, 403);
         await User.updateOne({ _id: admin.id }, { role: "admin" });
       },
     );
     await t.test(
       "admin can delete; invalid and missing IDs receive 400 and 404",
       async () => {
-        assert.equal((await remove(adminBody.token, "bad-id")).status, 400);
-        assert.equal((await remove(adminBody.token)).status, 204);
+        assert.equal((await remove(adminToken, "bad-id")).status, 400);
+        assert.equal((await remove(adminToken)).status, 204);
         assert.equal(await Order.exists({ _id: order.id }), null);
-        assert.equal((await remove(adminBody.token)).status, 404);
+        assert.equal((await remove(adminToken)).status, 404);
       },
     );
     await t.test("deleted users cannot use an existing token", async () => {
       await User.deleteOne({ _id: agent.id });
-      assert.equal((await remove(agentBody.token)).status, 401);
+      assert.equal((await remove(agentToken)).status, 401);
+    });
+    await t.test("session recovery and logout cookie clearing", async () => {
+      const response = await fetch(`${base}/me`, {
+        headers: { Cookie: `access_token=${adminToken}` },
+      });
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), {
+        user: { id: admin.id, email: admin.email, role: "admin" },
+      });
+      const logout = await fetch(`${base}/logout`, {
+        method: "POST",
+        headers: { Origin: config.APP_ORIGIN },
+      });
+      assert.equal(logout.status, 204);
+      assert.match(logout.headers.get("set-cookie")!, /access_token=;/);
+      assert.match(
+        logout.headers.get("set-cookie")!,
+        /Expires=Thu, 01 Jan 1970/,
+      );
+    });
+    await t.test("mutations reject missing and untrusted origins", async () => {
+      for (const origin of [
+        undefined,
+        "null",
+        "https://evil.example",
+        "http://localhost:9999",
+      ]) {
+        for (const path of ["login", "logout", "orders"]) {
+          const response = await fetch(`${base}/${path}`, {
+            method: "POST",
+            headers: {
+              Cookie: `access_token=${adminToken}`,
+              ...(origin ? { Origin: origin } : {}),
+            },
+          });
+          assert.equal(response.status, 403);
+        }
+      }
     });
     await t.test("login rate limit returns 429 and Retry-After", async () => {
       let response = await login({});

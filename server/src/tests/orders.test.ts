@@ -6,6 +6,7 @@ import mongoose, { Types } from "mongoose";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
 
+process.env.APP_ORIGIN = "http://localhost:3000";
 process.env.JWT_SECRET = randomBytes(32).toString("hex");
 process.env.JWT_EXPIRES_IN_SECONDS = "900";
 process.env.LOGIN_RATE_LIMIT_MAX = "30";
@@ -54,7 +55,7 @@ test("orders list against 50,000 isolated test orders", async (t) => {
       subject: user.id,
       expiresIn: 900,
     });
-    const headers = { Authorization: `Bearer ${token}` };
+    const headers = { Cookie: `access_token=${token}` };
     for (let offset = 0; offset < 50000; offset += 1000) {
       await Order.insertMany(
         Array.from({ length: 1000 }, (_, i) => {

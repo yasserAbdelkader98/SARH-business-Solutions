@@ -1,4 +1,5 @@
 import type { RequestHandler } from "express";
+import { cookieName } from "../cookies.js";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
 import { config } from "../config.js";
@@ -11,7 +12,7 @@ const tokenSchema = z.object({
   exp: z.number().int().positive(),
 });
 
-export type AuthUser = { id: string; role: "admin" | "agent" };
+export type AuthUser = { id: string; role: "admin" | "agent"; email: string };
 
 declare global {
   namespace Express {
@@ -22,16 +23,20 @@ declare global {
 }
 
 export const requireAuth: RequestHandler = async (req, res, next) => {
-  const match = /^Bearer ([^\s]+)$/i.exec(req.get("authorization") ?? "");
-  if (!match) {
-    res.status(401).json({ error: "A Bearer access token is required." });
+  const cookies = z
+    .object({ [cookieName]: z.string().min(1) })
+    .safeParse(req.cookies);
+  if (!cookies.success) {
+    res.status(401).json({ error: "Authentication required." });
     return;
   }
 
   let payload: z.infer<typeof tokenSchema>;
   try {
     payload = tokenSchema.parse(
-      jwt.verify(match[1], config.JWT_SECRET, { algorithms: ["HS256"] }),
+      jwt.verify(cookies.data[cookieName], config.JWT_SECRET, {
+        algorithms: ["HS256"],
+      }),
     );
   } catch {
     res.status(401).json({ error: "Invalid or expired access token." });
@@ -43,7 +48,7 @@ export const requireAuth: RequestHandler = async (req, res, next) => {
     res.status(401).json({ error: "User is no longer available." });
     return;
   }
-  req.user = { id: user.id, role: user.role };
+  req.user = { id: user.id, role: user.role, email: user.email };
   next();
 };
 
