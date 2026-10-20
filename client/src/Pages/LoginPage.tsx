@@ -24,8 +24,12 @@ export function LoginPage() {
   }
 
   return (
-    <form onSubmit={submit} aria-busy={pending}>
-      <h2>Sign in</h2>
+    <form className="login-card" onSubmit={submit} aria-busy={pending}>
+      <div className="login-intro">
+        <p className="eyebrow">WELCOME BACK</p>
+        <h2>Sign in</h2>
+        <p>Manage your orders, all in one place.</p>
+      </div>
       <label htmlFor="email">Email</label>
       <input
         id="email"
@@ -45,7 +49,7 @@ export function LoginPage() {
         onChange={(event) => setPassword(event.target.value)}
       />
       {error && <p role="alert">{error}</p>}
-      <button disabled={pending} type="submit">
+      <button className="primary" disabled={pending} type="submit">
         {pending ? "Signing in…" : "Sign in"}
       </button>
     </form>

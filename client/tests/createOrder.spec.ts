@@ -5,6 +5,8 @@ async function signIn(page: Page) {
   await page.getByLabel("Email", { exact: true }).fill("agent@example.com");
   await page.getByLabel("Password", { exact: true }).fill("password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(page.getByLabel("Customer name", { exact: true })).toBeHidden();
+  await page.getByRole("button", { name: "Create order", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "Create order" }),
   ).toBeVisible();
@@ -54,6 +56,12 @@ test("double submit, lost response, reload and retry retain the operation key an
     }
   });
   await page.getByLabel("Customer name", { exact: true }).fill("Hana Nasser");
+  await page.getByRole("button", { name: "Close form", exact: true }).click();
+  await expect(page.getByLabel("Customer name", { exact: true })).toBeHidden();
+  await page.getByRole("button", { name: "Create order", exact: true }).click();
+  await expect(page.getByLabel("Customer name", { exact: true })).toHaveValue(
+    "Hana Nasser",
+  );
   await page
     .getByLabel("Customer email", { exact: true })
     .fill("hana@example.com");

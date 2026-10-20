@@ -34,7 +34,9 @@ export function OrdersTable({
             <th scope="col">Customer</th>
             <th scope="col">Email</th>
             <th scope="col">Status</th>
-            <th scope="col">Total amount</th>
+            <th scope="col" className="amount">
+              Total amount
+            </th>
             <th scope="col">Created date</th>
             {canDelete && <th scope="col">Actions</th>}
           </tr>
@@ -44,8 +46,12 @@ export function OrdersTable({
             <tr key={order._id}>
               <td>{order.customerName}</td>
               <td>{order.customerEmail}</td>
-              <td>{order.status}</td>
               <td>
+                <span className={`status-badge status-${order.status}`}>
+                  {order.status}
+                </span>
+              </td>
+              <td className="amount">
                 {(order.totalAmount / 100).toLocaleString(undefined, {
                   minimumFractionDigits: 2,
                   maximumFractionDigits: 2,
@@ -59,6 +65,7 @@ export function OrdersTable({
               {canDelete && (
                 <td>
                   <button
+                    className="delete-button"
                     type="button"
                     disabled={deleting}
                     aria-label={`Delete order for ${order.customerName} (${order._id})`}

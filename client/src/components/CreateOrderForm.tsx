@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
@@ -29,6 +29,12 @@ function readOperation(storageKey: string): CreateOperation | null {
 export function CreateOrderForm() {
   const { session, authenticatedRequest } = useAuth();
   const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const customerInput = useRef<HTMLInputElement>(null);
+  const toggleButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (open) customerInput.current?.focus();
+  }, [open]);
   const storageKey = `orders-create:${session!.user.id}`;
   const [operation, setOperation] = useState(() => readOperation(storageKey));
   const [form, setForm] = useState(() =>
@@ -130,13 +136,41 @@ export function CreateOrderForm() {
   }
 
   return (
-    <section aria-labelledby="create-heading">
-      <h2 id="create-heading">Create order</h2>
-      <form className="create-order" onSubmit={submit} noValidate>
+    <section className="create-panel" aria-labelledby="create-heading">
+      <div className="section-heading">
+        <div>
+          <p className="eyebrow">ORDER MANAGEMENT</p>
+          <h2 id="create-heading">
+            {open ? "Create order" : "Your orders, organized."}
+          </h2>
+          <p>Find an existing order or register a new one.</p>
+        </div>
+        <button
+          ref={toggleButton}
+          className={open ? "" : "primary"}
+          type="button"
+          aria-expanded={open}
+          aria-controls="create-order-fields"
+          onClick={() => {
+            setOpen(!open);
+            if (open) toggleButton.current?.focus();
+          }}
+        >
+          {open ? "Close form" : "Create order"}
+        </button>
+      </div>
+      <form
+        id="create-order-fields"
+        hidden={!open}
+        className="create-order"
+        onSubmit={submit}
+        noValidate
+      >
         <fieldset disabled={pending || operation !== null}>
           <legend>Customer and items</legend>
           <label htmlFor="customer-name">Customer name</label>
           <input
+            ref={customerInput}
             id="customer-name"
             value={form.customerName}
             maxLength={200}
@@ -215,7 +249,7 @@ export function CreateOrderForm() {
             Add item
           </button>
         </fieldset>
-        <p>
+        <p className="order-total">
           Total amount:{" "}
           <output>{total === null ? "—" : (total / 100).toFixed(2)}</output>
         </p>
@@ -223,7 +257,7 @@ export function CreateOrderForm() {
         {operation?.orderId ? (
           <p role="status">Order created: {operation.orderId}</p>
         ) : (
-          <button type="submit" disabled={pending}>
+          <button className="primary" type="submit" disabled={pending}>
             {pending
               ? "Submitting…"
               : operation

@@ -87,7 +87,7 @@ export function OrdersPage() {
 
   const loading = searchPending || query.isPending;
   return (
-    <section aria-labelledby="orders-heading">
+    <section className="orders-card" aria-labelledby="orders-heading">
       <h2 id="orders-heading">Orders</h2>
       {deletion.isError && <p role="alert">{deletion.error.message}</p>}
       <div className="order-filters">

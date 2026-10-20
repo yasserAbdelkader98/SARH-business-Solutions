@@ -30,8 +30,16 @@ export function App() {
     );
 
   return (
-    <main>
-      <h1>Orders Console</h1>
+    <main className={session ? "app-shell" : "login-shell"}>
+      <header className="brand">
+        <span className="brand-mark" aria-hidden="true">
+          O
+        </span>
+        <div>
+          <p className="eyebrow">OPERATIONS WORKSPACE</p>
+          <h1>Orders Console</h1>
+        </div>
+      </header>
       {authError && (
         <p role="alert">{authError} Reload to retry or sign in below.</p>
       )}
@@ -46,8 +54,8 @@ export function App() {
               Sign out
             </button>
           </section>
-          <OrdersPage />
           <CreateOrderForm key={session.user.id} />
+          <OrdersPage />
         </>
       ) : (
         <LoginPage />
