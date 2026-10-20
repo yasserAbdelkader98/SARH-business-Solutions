@@ -1,6 +1,6 @@
 # Decisions in progress
 
-These are working notes, not the final three-decision submission. R2's required decision will be written when implemented.
+These are working notes, including the required R2 decision. The final submission should consolidate them into three decisions.
 
 ## Seed safely without resetting the database
 
@@ -20,7 +20,7 @@ Use MongoDB's built-in text index initially; arbitrary substring search is not p
 Extra search infrastructure is outside the local-only assessment scope.
 Confirm query plans and search behavior during R1 rather than claiming performance now.
 
-The optional idempotency key uses a [MongoDB partial unique index](https://www.mongodb.com/docs/manual/core/index-partial/) covering strings, so multiple documents can omit the key. Server retry handling remains R2 work.
+The idempotency key uses a [MongoDB partial unique index](https://www.mongodb.com/docs/manual/core/index-partial/) covering strings, so seed documents can omit the key. API creation requires it.
 
 ## Phase 2: short-lived JWTs in memory
 
@@ -32,8 +32,29 @@ Check the database user and role on each authenticated request so role changes t
 This costs one indexed user lookup; a token-only role check would be cheaper but stale until expiry.
 Use a simple per-process login limiter rather than a shared service for this single-server local app.
 
-## AI disclosure
+## Phase 3: indexed search and numbered pages
+
+Use 25-row offset pages with exact counts because the requested UI has numbered pages.
+Cursor pagination was considered; it handles deep pages and changing data better but complicates page navigation.
+Sort by the chosen field and `_id` in the same direction to make ties deterministic.
+Use the existing text index for quoted name phrases and a new email index for exact full-email matches.
+Multi-word names match the phrase together, avoiding MongoDB's default OR behavior.
+Substring regex search was rejected because it could scan all 50,000 documents.
+Broad text matches still require sorting and exact counts; counts and rows are not a transactional snapshot.
+Keep all filters in the query key, pass AbortSignal to fetch, and avoid retaining previous-filter rows.
+
+## R2: atomic insertion with a unique operation key
+
+Insert the complete order, UUID key and canonical SHA-256 hash as one document under a unique key index.
+A pre-insert findOne followed by create was rejected because simultaneous requests can both observe no order.
+On duplicate-key errors, compare the normalized payload/user hash and return the stored order or 409.
+Briefly retry a missing winner lookup; otherwise return 503 and require the same key on retry.
+Keep the exact submitted payload/key in per-user sessionStorage so same-tab reloads can recover it; tokens remain in memory.
+Integer-cent totals are recalculated on the server, and the list refreshes only after confirmed success.
+The guarantee lasts while the keyed record exists; hard-delete, cleared client storage and intentionally new keys are explicit limits.
+
+## AI assistance
 
 After Phase 1 review, the client and server use independent npm packages instead of a root workspace, as requested. This removes the root manifest and concurrently dependency; development now uses two terminals. Each app has its own `.env` and `.env.example`. The client stores only development ports; database credentials stay on the server. The client's `API_PORT` must be kept in sync with the server's `PORT`.
 
-Codex assisted with scaffolding, schemas, seed generation, authentication, the login screen, security tests, documentation and verification commands. The candidate must review and understand these choices before the final submission and live interview.
+Codex assisted with scaffolding, schemas, seed generation, authentication, the login screen, orders list and create form, idempotency handling, security/concurrency/browser tests, documentation and verification commands. The candidate must review and understand these choices before the final submission and live interview.

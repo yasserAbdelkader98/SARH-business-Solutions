@@ -4,11 +4,21 @@
   background: #f5f6f8;
   line-height: 1.6;
 }
+.create-order {
+  max-width: 600px;
+}
+.create-order fieldset {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid #64748b;
+  padding: 16px;
+}
 body {
   margin: 0;
 }
 main {
-  max-width: 640px;
+  max-width: 1120px;
   margin: 64px auto;
   padding: 24px;
 }
@@ -54,4 +64,69 @@ input:focus-visible {
 }
 [role="alert"] {
   color: #a11919;
+}
+.order-filters {
+  display: grid;
+  grid-template-columns: 2fr repeat(3, 1fr);
+  gap: 16px;
+}
+.order-filters label {
+  display: grid;
+  gap: 6px;
+}
+select {
+  width: 100%;
+  min-width: 0;
+  padding: 10px;
+  font: inherit;
+  border: 1px solid #64748b;
+  border-radius: 4px;
+  background: white;
+  color: inherit;
+}
+select:focus-visible,
+.table-scroll:focus-visible {
+  outline: 3px solid #2457cc;
+  outline-offset: 2px;
+}
+.table-scroll {
+  overflow-x: auto;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: white;
+}
+caption {
+  text-align: left;
+  margin-bottom: 8px;
+}
+th,
+td {
+  padding: 12px;
+  text-align: left;
+  border-bottom: 1px solid #cbd5e1;
+}
+th {
+  background: #e9edf3;
+}
+.amount {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  margin: 20px 0;
+}
+@media (max-width: 720px) {
+  .order-filters {
+    grid-template-columns: 1fr;
+  }
+  main {
+    margin: 16px auto;
+    padding: 16px;
+  }
 }

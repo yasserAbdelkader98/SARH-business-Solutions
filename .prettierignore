@@ -5,3 +5,5 @@
 **/.env.*
 **/package-lock.json
 email.md
+**/test-results/
+**/playwright-report/

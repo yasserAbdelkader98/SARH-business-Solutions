@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "start": "node dist/index.js",
     "seed": "tsx src/seed.ts",
-    "test": "npm run build && node --test dist/tests/auth.test.js",
+    "test": "npm run build && node --test dist/tests/*.test.js",
+    "proof:idempotency": "npm run build && node --test dist/tests/createOrder.test.js",
     "format": "prettier --write . --ignore-path ../.prettierignore",
     "format:check": "prettier --check . --ignore-path ../.prettierignore"
   },

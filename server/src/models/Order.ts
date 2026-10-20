@@ -66,6 +66,7 @@ orderSchema.index({ totalAmount: -1, _id: -1 });
 orderSchema.index({ status: 1, createdAt: -1, _id: -1 });
 orderSchema.index({ status: 1, totalAmount: -1, _id: -1 });
 orderSchema.index({ customerName: "text", customerEmail: "text" });
+orderSchema.index({ customerEmail: 1 });
 orderSchema.index(
   { idempotencyKey: 1 },
   {

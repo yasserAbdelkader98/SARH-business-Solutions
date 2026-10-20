@@ -1,6 +1,6 @@
 # Orders Console
 
-Phases 1–2: React/Vite/TypeScript client, Express/TypeScript API, local MongoDB with Mongoose, seeded data, JWT login and admin-only order deletion. Order listing and creation are not implemented yet.
+Phases 1–4: React/Vite/TypeScript client, Express/TypeScript API, local MongoDB with Mongoose, seeded data, JWT login, admin-only order deletion, a searchable paginated orders list, and idempotent order creation.
 
 ## Local setup
 
@@ -34,7 +34,7 @@ With client port 3000 and server port 8000, open http://localhost:3000. The page
 
 ## Commands
 
-Backend request handlers live in `server/src/controllers/`; routes only register URLs and middleware. Frontend screens live in `client/src/Pages/`, reusable UI in `client/src/components/`, and shared authentication state in `client/src/context/AuthContext.tsx`. Authentication still uses an in-memory Bearer token, not cookies.
+Backend order handlers live together in `server/src/controllers/orders.ts`; their Zod schemas live in `server/src/validation/Orders.ts`. Routes only register URLs and middleware. Frontend screens live in `client/src/Pages/`, reusable UI in `client/src/components/`, and shared authentication state in `client/src/context/AuthContext.tsx`. Authentication still uses an in-memory Bearer token, not cookies.
 
 Use Prettier for all code formatting. Run `npm run format` in each app before review, or `npm run format:check` to check formatting without changing files. Both apps use the root `.prettierrc.json`; generated files, environment files and `email.md` are excluded.
 
@@ -67,8 +67,9 @@ Passwords are hashed with bcrypt (cost 12). Both seeded users can log in. Changi
 - Users: unique normalized email.
 - Orders: `{ createdAt: -1, _id: -1 }` and `{ totalAmount: -1, _id: -1 }` for stable sorting and future cursor pagination.
 - Orders: the same two indexes prefixed with `status` for filtering plus sorting. Reverse scans support ascending order when both sort fields reverse.
-- Orders: one text index on customer name and email for future word-based search. It is not a substring index, and text search combined with date/amount sorting may require an in-memory sort. The query implementation and query-plan verification belong to R1.
-- Orders: partial unique `idempotencyKey` index covering strings only, allowing seed orders to omit the field. `requestHash` is reserved for R2. These fields alone do not implement retry/idempotency behavior.
+- Orders: one text index on customer name and email for word-based search. It is not a substring index; text search with date/amount sorting requires sorting matching results separately.
+- Orders: `{ customerEmail: 1 }` for exact, lowercased email lookup. Searches containing `@` take this path instead of text tokenization.
+- Orders: partial unique `idempotencyKey` index covering strings only, allowing seed orders to omit the field. Every API create requires a UUID key; `requestHash` stores the server-generated canonical request hash used to distinguish retries from conflicts.
 
 ## Manual verification
 
@@ -78,9 +79,90 @@ Passwords are hashed with bcrypt (cost 12). Both seeded users can log in. Changi
 4. Run `npm run dev` in each directory in separate terminals, visit the setup page and check its connection message. Open `/api/health` directly and confirm HTTP 200.
 5. Stop MongoDB, wait for driver disconnect detection, then click Check connection: the page should show an error. Restart MongoDB and retry.
 
-## What is not implemented yet
+## Orders list (R1)
 
-Order listing/creation and their UI, R1 stale-request protection, R2 duplicate-request proof, and final assessment documentation/screenshots are deferred to their requested phases. No optional assessment features, refresh tokens, signup, OAuth or deployment are included. Authentication has integration tests; frontend browser behavior still needs manual verification.
+`GET /api/orders?search=Ahmed&status=pending&sortBy=createdAt&sortOrder=desc&page=1` returns `{ orders, total, page, pageSize, totalPages }`. Page size is fixed at 25. Only `_id`, customer name/email, status, amount and creation date are selected, with `lean()` used to avoid Mongoose document hydration. Both admin and agent users can list orders.
+
+Query parameters are validated with Zod: status must be a known status, sort field must be `createdAt` or `totalAmount`, direction must be `asc` or `desc`, and page must be a positive integer (maximum 1,000,000). Search is trimmed and limited to 100 characters. Unknown or repeated parameters return 400; omit status to include all statuses. A page beyond the last page returns an empty list with the requested page and current total.
+
+Search without `@` uses a quoted MongoDB text phrase: `Hana Nasser` matches those words together, not either word separately. Matching is case-insensitive and still uses the text index; quotes/backslashes are removed and whitespace is normalized before constructing the phrase. A phrase is not whole-field equality: a longer name containing that phrase can also match. Search containing `@` matches the exact normalized email. Partial name/email substrings are deliberately unsupported. These semantics avoid unbounded regex scans and use local MongoDB indexes without an additional service. See [MongoDB text indexes](https://www.mongodb.com/docs/manual/core/indexes/index-types/index-text/).
+
+Date and amount sorts include `_id` in the same direction as a deterministic tie-breaker. The existing sort indexes, with separate status-prefixed variants, serve plain/filtered lists. Text searches use the text index but sort their matched results separately; exact email searches use the email index, with sorting over its matches. Exact totals cost an additional count query; unfiltered counting is hinted to the `_id` index. Both operations have a five-second database time limit.
+
+Offset pagination keeps page numbers and total counts easy to understand, but deeper pages scan past earlier index entries. Deterministic sorting prevents ambiguous ties; it does not freeze the dataset across concurrent inserts/deletes, and the parallel count/list queries are not a snapshot transaction. Cursor pagination and snapshot reads are deliberately outside this phase.
+
+### Stale responses and manual verification
+
+The query key contains the user ID plus search, status, sort field, direction and page. TanStack Query keeps results separated by key, and its AbortSignal reaches fetch through the authentication helper. No previous-filter placeholder data is displayed. Search waits 600 ms after typing, hides old rows during that wait, and changes the applied search and page together. Status/sort changes reset page to 1 in the same state update. See [query keys](https://tanstack.com/query/latest/docs/framework/react/guides/query-keys) and [cancellation](https://tanstack.com/query/latest/docs/framework/react/guides/query-cancellation).
+
+1. Seed the application database yourself if needed, start both apps, and sign in. With 50,000 seed orders and no filters, expect 25 rows and 2,000 pages.
+2. Search `Ahmed` or paste an exact customer email from a row. Change status and check every visible row has that status. Change sorting in both directions and navigate between pages.
+3. Navigate to page 2, then change search/status/sort; the next results must be page 1.
+4. In browser DevTools, enable network throttling. Change status from Processing to Completed to Cancelled quickly. While pending, old rows disappear; once rows appear, they must all be Cancelled, including after earlier requests finish.
+5. Search an unknown name for the empty state. Stop the API and change a filter to see the error and Retry button. Restart it and retry.
+
+`npm test` in `server/` includes the auth regression tests and a separate test database containing 50,000 orders. It checks projection, pagination, total count, filters, exact-email/name search, both sorts/directions, tie-breakers, invalid parameters and indexed query plans. Both temporary databases are removed afterward; the application database is not modified.
+
+`npm test` in `client/` runs Playwright browser checks against a temporary Vite server on port 4174, with mocked API responses to force older requests to finish later. It also checks the Bearer header, pagination reset, debounce, error/retry and empty state. Windows uses installed Microsoft Edge; on other systems install the test browser once with `npx playwright install chromium`. No backend or application credentials are required for these browser tests.
+
+Phase 3 verification: all 16 reported backend tests and both browser tests passed. The browser race test deliberately ignores transport cancellation, exercising query-key isolation even when old responses arrive later. On the isolated 50,000-row fixture, ordinary list plans examined 25 keys for 25 rows, exact email examined one key, and a broad text search examined 25,000 matching keys; none of the four inspected plans used a collection scan. These are local observations, not a production latency guarantee.
+
+## Create order (R2)
+
+`POST /api/orders` requires a Bearer token and `Idempotency-Key: <UUID>`. Example JSON (prices are integer cents):
+
+```json
+{
+  "customerName": "Hana Nasser",
+  "customerEmail": "hana@example.com",
+  "items": [
+    { "name": "Notebook", "quantity": 3, "unitPrice": 10 },
+    { "name": "Pen", "quantity": 1, "unitPrice": 20 }
+  ]
+}
+```
+
+The server calculates `totalAmount: 50` and sets status to `pending`. Client-supplied totals, status, hashes and unknown fields are rejected. Zod validates both the form and API: 1–5 items, quantities from 1 to 10,000, nonnegative integer-cent prices up to 100,000,000, customer name up to 200 characters, email up to 254 and item name up to 120. These bounds keep all products and totals within JavaScript's safe integer range. The form converts decimal price strings by splitting whole and fractional parts, avoiding floating-point multiplication for conversion to cents.
+
+The controller normalizes names by trimming and emails by trimming/lowercasing, then constructs an explicit property-ordered object containing the authenticated user ID, customer details and ordered items. Its SHA-256 hash and the key are inserted atomically with the order. Object-property order does not affect the hash; item-array order does. The server does not run a pre-insert lookup: the database's unique index decides which concurrent insert wins. See MongoDB's [single-document atomicity](https://www.mongodb.com/docs/manual/core/write-operations-atomicity/) and [unique index guarantees](https://www.mongodb.com/docs/manual/core/index-unique/).
+
+- New key: HTTP 201 with `{ order }`.
+- Existing key and same canonical request/user: HTTP 200 with the stored order and same ID.
+- Existing key with changed canonical request or another user: HTTP 409, without modifying the order.
+- Duplicate-key error while the winning order is not visible: retry primary reads up to five times with 50 ms pauses. If unavailable, return HTTP 503 and `Retry-After: 1`; the caller must retry the same key and payload. No fallback insert occurs in this branch.
+
+### Client operation lifecycle
+
+The first valid submission generates `crypto.randomUUID()` and saves the key and validated payload in sessionStorage under the user ID before sending. Submitted fields remain locked so Retry same order resends exactly the same payload/key after a network failure, a 15-second client timeout, or re-login after a page reload in the same tab. A synchronous in-flight guard blocks double-clicks before React re-renders; the database remains the actual duplicate-prevention guarantee.
+
+Success retains the operation and shows its order ID. Only Start new order clears it and enables a fresh submission; abandoning an unresolved request requires confirmation because it may already have succeeded. Successful creation invalidates the orders queries, with no optimistic rows. The new order may not appear under the current search/status/page settings.
+
+Only the pending/completed create operation (including customer details) is kept in sessionStorage, not the access token. It survives same-tab reloads but is lost when the tab/storage is cleared. It remains available to scripts on the same origin, so it is not protected against XSS. If sessionStorage cannot be written, the form does not initiate a new request.
+
+### Runnable duplicate proof
+
+With local MongoDB running and `server/.env` configured:
+
+```sh
+cd server
+npm run proof:idempotency
+```
+
+This starts the real Express app on a temporary port against a uniquely named temporary database. It sends two identical POST requests with `Promise.all`, asserts statuses 201/200 and identical order IDs, then queries MongoDB to assert exactly one document has that key. It prints both IDs and `databaseCount: 1`. It also checks changed-payload 409, canonicalization, lost-response replay, separate-user conflicts, validation, and the bounded delayed-visibility/503 path. The temporary database is dropped afterward; your application database is untouched.
+
+Run `npm test` in `server/` for all backend tests, or in `client/` for the browser tests. Browser tests exercise double submission, a lost response, reload/re-login with the same operation, a genuinely new key, exact cent conversion, client validation and item limits. The eight reported standalone proof tests and all four browser tests passed during Phase 4; builds and type checks passed as well.
+
+### Guarantee and limits
+
+The guarantee is at most one stored order per UUID key while its indexed order record exists, regardless of concurrent requests or application process restarts against the same database. Same-key retries return that order; they do not create a second one. It is not business-level duplicate detection: identical customer/items sent with a fresh key represent a new operation and may create another order.
+
+Deleting the order also deletes its key/hash, so replay after an admin hard-delete can create an order again. Clearing storage, closing a tab, manually abandoning an uncertain request, database loss, or removing the unique index falls outside the guarantee. No permanent idempotency ledger, cross-device draft recovery, external side-effect guarantee, Redis, queue, distributed lock or multi-document transaction is implemented.
+
+To verify manually, create an order and check the displayed total. Inspect the POST's UUID header, retry after a simulated network failure, and confirm the same key is reused. Reload and sign in again to recover the saved operation. Start new order should be the only normal action that clears the completed/pending operation and permits a new key.
+
+## Remaining assessment work
+
+Final assessment documentation consolidation and screenshots/design memo are deferred to their requested phases. No optional assessment features, refresh tokens, signup, OAuth or deployment are included. There is no virtualization, infinite scrolling or optimistic creation.
 
 ## Phase 1 checks performed
 
@@ -94,9 +176,9 @@ Order listing/creation and their UI, R1 stale-request protection, R2 duplicate-r
 
 `POST /api/login` accepts JSON `{ "email": "your seeded email", "password": "your seeded password" }` and returns `{ token, user: { id, email, role } }`. Invalid input returns 400; incorrect credentials return 401; rate limiting returns 429 with `Retry-After`. Email is trimmed and lowercased; passwords are not trimmed.
 
-All `/api/orders` routes require `Authorization: Bearer <token>`. `DELETE /api/orders/:id` returns 204 for successful admin deletion, 403 for an agent, 400 for a malformed ID, and 404 for a missing order. Missing/invalid/expired authentication returns 401 before the route handler runs. GET/POST orders are not implemented yet; an authenticated request to those methods returns 404.
+All `/api/orders` routes require `Authorization: Bearer <token>`. `DELETE /api/orders/:id` returns 204 for successful admin deletion, 403 for an agent, 400 for a malformed ID, and 404 for a missing order. Missing/invalid/expired authentication returns 401 before the route handler runs. Both admin and agent users can GET the list and POST a new order.
 
-The React auth provider stores the session in state and exposes `authenticatedRequest(path, options)`, which attaches the Bearer token and signs out on 401. Future orders screens must use this helper. There is no delete form yet; exercise deletion using an API client or the integration tests.
+The React auth provider stores the session in state and exposes `authenticatedRequest(path, options)`, which attaches the Bearer token and signs out on 401. The orders list uses this helper and passes its AbortSignal through to fetch. Admins see a delete icon in each order row and must confirm before deletion. Agents do not see the action. Backend role checks remain authoritative, and failures are shown without removing the row.
 
 ## Security review of the supplied code
 
